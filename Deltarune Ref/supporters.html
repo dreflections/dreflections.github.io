@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Thank you - Reflections</title>
+
+  <link rel="icon" type="image/jpeg" href="Originals/logo.jpeg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="supporters.css">
+</head>
+<body>
+
+  <section class="thankyou">
+    <h1 class="thankyou__title">Thank you ♥</h1>
+
+    <!-- Tabella riempita da JS con i dati presi dal backend -->
+    <table class="thankyou__table">
+      <thead>
+        <tr><th>Nickname</th></tr>
+      </thead>
+      <tbody id="supporters-body">
+        <tr><td>Loading…</td></tr>
+      </tbody>
+    </table>
+
+    <!-- Form per aggiungere il proprio nickname (nascosto se hai già supportato) -->
+    <form id="support-form" class="thankyou__form">
+      <input type="text" id="nickname" name="nickname" placeholder="Enter your username"
+             maxlength="30" pattern="[A-Za-z0-9 _\-]{1,30}"
+             title="Only letters, numbers, spaces, - and _ (max 30 characters)" required>
+      <button type="submit">Support ♥</button>
+    </form>
+    <p id="already-supported" class="thankyou__done" style="display: none;">You already supported this project. Thank you! ♥</p>
+    <p id="support-message" class="thankyou__message"></p>
+
+    <a href="index.html" class="thankyou__back">Back to home</a>
+  </section>
+
+  <!-- ============================
+       BANNER COOKIE
+       Compare finché non si sceglie. Il cookie per riconoscere il
+       visitatore viene creato SOLO dopo "Accept".
+  ============================ -->
+  <div id="cookie-banner" class="cookie-banner" style="display: none;">
+    <div id="cookie-details" class="cookie-banner__details" style="display: none;">
+      <table class="cookie-banner__table">
+        <tr><th>What it's for</th><th>Duration</th></tr>
+        <tr><td>Remembering your browser, so you can't send more than one name</td><td>1 year</td></tr>
+        <tr><td>Remembering that you already supported the project</td><td>1 year</td></tr>
+      </table>
+    </div>
+    <p class="cookie-banner__text">
+      This page uses cookies to remember that you already supported the project, so you can't send a name twice.
+      <button id="cookie-details-toggle" type="button" class="cookie-banner__details-toggle">Details ▲</button>
+    </p>
+    <div class="cookie-banner__buttons">
+      <button id="cookie-decline" class="cookie-banner__btn cookie-banner__btn--secondary">Decline</button>
+      <button id="cookie-accept" class="cookie-banner__btn">Accept</button>
+    </div>
+  </div>
+
+  <!-- ============================
+       LOGICA JS
+       - IL-TUO-BACKEND: sostituisci con l'URL reale del backend
+       - loadSupporters(): fa GET /api/supporters e riempie la tabella
+       - il submit del form fa POST /api/support con nickname + visitor_id
+       - visitor_id: identificativo casuale salvato in cookie, il backend
+         lo hasha e impedisce un secondo supporto dallo stesso visitatore
+  ============================ -->
+  <script>
+    const PRODUCTION = false;
+    // Se false: nessuna chiamata al backend. I nomi vengono salvati e letti
+    // solo nel browser (localStorage), utile per provare la UI senza avere
+    // il backend/MySQL avviati.
+    const USE_BACKEND = false;
+
+    let API_BASE_URL;
+    if (PRODUCTION) {
+      API_BASE_URL = "https://backend";
+    } else {
+      API_BASE_URL = "http://127.0.0.1:8000";
+    }
+
+    // Stessa regola di validazione del backend: solo lettere, numeri, spazi, - e _
+    const NICKNAME_PATTERN = /^[A-Za-z0-9 _-]{1,30}$/;
+    const LOCAL_STORAGE_KEY = "reflections_supporters";
+    const SUPPORTED_COOKIE = "reflections_supported";
+    const VISITOR_COOKIE = "reflections_visitor_id";
+    const CONSENT_KEY = "reflections_cookie_consent"; // "accepted" | "declined"
+
+    // ---- Consenso cookie ----
+    function getConsent() {
+      return localStorage.getItem(CONSENT_KEY);
+    }
+
+    function setConsent(value) {
+      localStorage.setItem(CONSENT_KEY, value);
+    }
+
+    function showCookieBannerIfNeeded() {
+      if (!getConsent()) {
+        document.getElementById("cookie-banner").style.display = "flex";
+      }
+    }
+
+    document.getElementById("cookie-accept").addEventListener("click", function () {
+      setConsent("accepted");
+      document.getElementById("cookie-banner").style.display = "none";
+      getOrCreateVisitorId(); // ora può creare il cookie del visitatore
+      applySupportedState();
+    });
+
+    document.getElementById("cookie-decline").addEventListener("click", function () {
+      setConsent("declined");
+      document.getElementById("cookie-banner").style.display = "none";
+    });
+
+    document.getElementById("cookie-details-toggle").addEventListener("click", function () {
+      const details = document.getElementById("cookie-details");
+      const isOpen = details.style.display === "block";
+      details.style.display = isOpen ? "none" : "block";
+      this.textContent = isOpen ? "Details ▲" : "Hide ▼";
+    });
+
+    // ---- Cookie: helper generici ----
+    function getCookie(name) {
+      const match = document.cookie
+        .split("; ")
+        .find(row => row.startsWith(name + "="));
+      return match ? match.split("=")[1] : null;
+    }
+
+    function setCookie(name, value) {
+      // 1 anno di durata
+      document.cookie = name + "=" + value + "; max-age=" + (60 * 60 * 24 * 365) + "; path=/; SameSite=Lax";
+    }
+
+    // Id visitatore: creato in cookie SOLO se c'è il consenso.
+    // Senza consenso, ritorna un id temporaneo usa e getta (non viene salvato da nessuna parte).
+    function getOrCreateVisitorId() {
+      if (getConsent() !== "accepted") {
+        return (window.crypto && window.crypto.randomUUID)
+          ? window.crypto.randomUUID()
+          : "temp-" + Date.now();
+      }
+      let id = getCookie(VISITOR_COOKIE);
+      if (!id) {
+        id = (window.crypto && window.crypto.randomUUID)
+          ? window.crypto.randomUUID()
+          : "v-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+        setCookie(VISITOR_COOKIE, id);
+      }
+      return id;
+    }
+
+    function markAsSupported() {
+      if (getConsent() === "accepted") {
+        setCookie(SUPPORTED_COOKIE, "1");
+      }
+      // Senza consenso: nessun cookie, quindi niente memoria tra un accesso e l'altro
+      // (solo un blocco per il resto di questa pagina, gestito sotto)
+    }
+
+    function hasSupportedCookie() {
+      return getCookie(SUPPORTED_COOKIE) === "1";
+    }
+
+    let sessionOnlySupported = false; // usato solo se il consenso è rifiutato
+
+    // Se il cookie è già presente, nascondo il form e mostro il messaggio "già supportato"
+    function applySupportedState() {
+      if (hasSupportedCookie() || sessionOnlySupported) {
+        document.getElementById("support-form").style.display = "none";
+        document.getElementById("already-supported").style.display = "block";
+      }
+    }
+
+    function getLocalSupporters() {
+      return JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || "[]");
+    }
+
+    function saveLocalSupporters(list) {
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(list));
+    }
+
+    // Riempie la tabella: dal backend, oppure da localStorage se USE_BACKEND è false
+    function loadSupporters() {
+      const body = document.getElementById("supporters-body");
+
+      if (!USE_BACKEND) {
+        const list = getLocalSupporters();
+        body.innerHTML = "";
+        if (list.length === 0) {
+          body.innerHTML = "<tr><td>No one yet — be the first!</td></tr>";
+          return;
+        }
+        list.forEach(nickname => body.appendChild(buildRow(nickname)));
+        return;
+      }
+
+      fetch(API_BASE_URL + "/api/supporters")
+        .then(res => res.json())
+        .then(data => {
+          body.innerHTML = "";
+          if (data.length === 0) {
+            body.innerHTML = "<tr><td>No one yet — be the first!</td></tr>";
+            return;
+          }
+          data.forEach(supporter => body.appendChild(buildRow(supporter.nickname)));
+        })
+        .catch(() => {
+          body.innerHTML = "<tr><td>... It seems so quiet here...</td></tr>";
+        });
+    }
+
+    function buildRow(nickname) {
+      const row = document.createElement("tr");
+      const nameCell = document.createElement("td");
+      nameCell.textContent = nickname; // textContent = niente injection HTML
+      row.appendChild(nameCell);
+      return row;
+    }
+
+    document.getElementById("support-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+
+      // Difesa in più: se il cookie è presente, non mando nulla (il form
+      // dovrebbe già essere nascosto, ma controllo comunque)
+      if (hasSupportedCookie()) {
+        return;
+      }
+
+      const nicknameInput = document.getElementById("nickname");
+      const messageBox = document.getElementById("support-message");
+      const body = document.getElementById("supporters-body");
+      const nickname = nicknameInput.value;
+      const visitorId = getOrCreateVisitorId();
+
+      messageBox.textContent = "";
+      messageBox.className = "thankyou__message";
+
+      // ---- Modalità locale: niente backend, tutto in localStorage + cookie ----
+      if (!USE_BACKEND) {
+        if (!NICKNAME_PATTERN.test(nickname)) {
+          messageBox.textContent = "Only letters, numbers, spaces, - and _ (max 30 characters).";
+          messageBox.classList.add("thankyou__message--error");
+          return;
+        }
+
+        const list = getLocalSupporters();
+        if (list.includes(nickname)) {
+          messageBox.textContent = "This nickname is already taken.";
+          messageBox.classList.add("thankyou__message--error");
+          return;
+        }
+
+        list.push(nickname);
+        saveLocalSupporters(list);
+        body.appendChild(buildRow(nickname));
+        nicknameInput.value = "";
+
+        markAsSupported();
+        if (getConsent() !== "accepted") { sessionOnlySupported = true; }
+        applySupportedState();
+
+        messageBox.textContent = "Thanks, " + nickname + "!";
+        messageBox.classList.add("thankyou__message--success");
+        return;
+      }
+
+      // ---- Modalità backend: salvataggio ottimistico + rollback su errore ----
+      const optimisticRow = buildRow(nickname);
+      body.appendChild(optimisticRow);
+      nicknameInput.value = "";
+
+      fetch(API_BASE_URL + "/api/support", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nickname: nickname, visitor_id: visitorId })
+      })
+        .then(res => res.json().then(data => ({ ok: res.ok, data })))
+        .then(({ ok, data }) => {
+          if (!ok) {
+            optimisticRow.remove();
+            messageBox.textContent = data.detail;
+            messageBox.classList.add("thankyou__message--error");
+            return;
+          }
+          messageBox.textContent = "Thanks, " + data.nickname + "!";
+          messageBox.classList.add("thankyou__message--success");
+          markAsSupported();
+          if (getConsent() !== "accepted") { sessionOnlySupported = true; }
+          applySupportedState();
+          loadSupporters(); // risincronizzo con la lista vera dal backend
+        })
+        .catch(() => {
+          optimisticRow.remove();
+          messageBox.textContent = "Network error, please try again.";
+          messageBox.classList.add("thankyou__message--error");
+        });
+    });
+
+    if (getConsent() === "accepted") {
+      getOrCreateVisitorId();
+    }
+    loadSupporters();
+    applySupportedState();
+    showCookieBannerIfNeeded();
+  </script>
+
+</body>
+</html>
