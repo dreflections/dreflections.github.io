@@ -1,8 +1,9 @@
 """
-Backend per il bottone "Support" di Reflections.
+Backend per il bottone "Support" di Reflections (Flask + SQLite / PythonAnywhere).
 
 API JSON pura: il frontend (supporters.html, pagina statica) fa fetch
-da JavaScript per leggere/scrivere i supporter.
+da JavaScript per leggere/scrivere i supporter. Contratto IDENTICO alla
+versione FastAPI: stessi URL, stessi metodi, stessi JSON, stessi status code.
 
 Endpoint:
   GET  /api/supporters   -> lista di tutti i supporter (JSON)
@@ -13,23 +14,22 @@ Regole:
   - nickname UNIVOCO
   - 1 supporto per visitatore: il frontend genera un visitor_id casuale
     salvato in un cookie; qui viene hashato (SHA-256 + pepper) e salvato
-    come visitor_hash, con vincolo UNIQUE. Così anche cancellando il
-    localStorage (ma non il cookie) il server rifiuta un secondo nome,
-    e nel database non resta un id in chiaro riutilizzabile.
+    come visitor_hash, con vincolo UNIQUE.
+
+Database: file SQLite locale (supporters.db) creato automaticamente
+accanto a main.py. Percorso modificabile con la variabile d'ambiente DB_PATH.
 
 Setup:
   pip install -r requirements.txt
-  Imposta le variabili d'ambiente DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, SECRET_PEPPER
-  uvicorn main:app --reload
+  Variabile d'ambiente SECRET_PEPPER (e opzionale DB_PATH), vedi file WSGI.
 """
 
 import os
 import re
 import hashlib
 
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker, declarative_base
@@ -38,12 +38,12 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 # =========================================================
 # CONFIG
 # =========================================================
-DB_USER = os.environ.get("DB_USER", "root")
-DB_PASSWORD = os.environ.get("DB_PASSWORD", "password")
-DB_HOST = os.environ.get("DB_HOST", "localhost")
-DB_NAME = os.environ.get("DB_NAME", "reflections")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}"
+# Percorso ASSOLUTO del file SQLite (su PythonAnywhere la cartella di lavoro
+# non coincide con quella del progetto, quindi un percorso relativo sbaglierebbe posto).
+DB_PATH = os.environ.get("DB_PATH", os.path.join(BASE_DIR, "supporters.db"))
+DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 # "Pepper": stringa segreta aggiunta prima dell'hash, così anche se qualcuno
 # vede il database non può ricostruire l'hash partendo da un visitor_id noto.
@@ -60,7 +60,12 @@ def hash_visitor_id(visitor_id: str) -> str:
 # =========================================================
 # MODELS (SQLAlchemy)
 # =========================================================
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+# check_same_thread=False: Flask può usare la connessione da thread diversi.
+# timeout=30: se il file è bloccato da un'altra scrittura, aspetta fino a 30s.
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False, "timeout": 30},
+)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
@@ -80,86 +85,89 @@ Base.metadata.create_all(engine)
 # =========================================================
 # APP
 # =========================================================
-app = FastAPI()
+app = Flask(__name__)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # in produzione: metti il dominio del tuo sito al posto di *
-    allow_methods=["GET", "POST"],
+# in produzione: metti il dominio del tuo sito al posto di "*"
+CORS(
+    app,
+    resources={r"/api/*": {"origins": "*"}},
+    methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+
+def error(status_code: int, detail: str):
+    # Stesso formato errori di FastAPI: {"detail": "..."}  -> il frontend non cambia
+    return jsonify({"detail": detail}), status_code
 
 
 @app.get("/api/supporters")
 def list_supporters():
     db = SessionLocal()
-    supporters = db.query(Supporter).order_by(Supporter.user_id.desc()).all()
-    db.close()
-
-    return [
-        {
-            "user_id": s.user_id,
-            "nickname": s.nickname,
-            "created_at": s.created_at.isoformat() if s.created_at else None,
-        }
-        for s in supporters
-    ]
+    try:
+        supporters = db.query(Supporter).order_by(Supporter.user_id.desc()).all()
+        return jsonify(
+            [
+                {
+                    "user_id": s.user_id,
+                    "nickname": s.nickname,
+                    "created_at": s.created_at.isoformat() if s.created_at else None,
+                }
+                for s in supporters
+            ]
+        )
+    finally:
+        db.close()
 
 
 @app.post("/api/support")
-async def add_supporter(request: Request):
-    data = await request.json()
-    nickname = (data.get("nickname") or "").strip()
-    visitor_id = (data.get("visitor_id") or "").strip()
+def add_supporter():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = {}
+
+    nickname = data.get("nickname") or ""
+    visitor_id = data.get("visitor_id") or ""
+    if not isinstance(nickname, str) or not isinstance(visitor_id, str):
+        return error(400, "Invalid request.")
+    nickname = nickname.strip()
+    visitor_id = visitor_id.strip()
 
     if not NICKNAME_PATTERN.match(nickname):
-        return JSONResponse(
-            status_code=400,
-            content={
-                "detail": "Invalid nickname: only letters, numbers, spaces, - and _ (max 30 characters)."
-            },
+        return error(
+            400,
+            "Invalid nickname: only letters, numbers, spaces, - and _ (max 30 characters).",
         )
 
     if not visitor_id:
-        return JSONResponse(status_code=400, content={"detail": "Missing visitor id."})
+        return error(400, "Missing visitor id.")
 
     visitor_hash = hash_visitor_id(visitor_id)
 
     db = SessionLocal()
-
-    # Controllo esplicito prima dell'insert, per dare un messaggio d'errore preciso
-    if db.query(Supporter).filter_by(visitor_hash=visitor_hash).first():
-        db.close()
-        return JSONResponse(
-            status_code=409,
-            content={"detail": "You already supported this project."},
-        )
-
-    if db.query(Supporter).filter_by(nickname=nickname).first():
-        db.close()
-        return JSONResponse(
-            status_code=409,
-            content={"detail": "This nickname is already taken."},
-        )
-
-    supporter = Supporter(nickname=nickname, visitor_hash=visitor_hash)
-    db.add(supporter)
     try:
-        db.commit()
-    except IntegrityError:
-        # Backstop in caso di richieste quasi simultanee (race condition)
-        db.rollback()
+        # Controllo esplicito prima dell'insert, per dare un messaggio d'errore preciso
+        if db.query(Supporter).filter_by(visitor_hash=visitor_hash).first():
+            return error(409, "You already supported this project.")
+
+        if db.query(Supporter).filter_by(nickname=nickname).first():
+            return error(409, "This nickname is already taken.")
+
+        supporter = Supporter(nickname=nickname, visitor_hash=visitor_hash)
+        db.add(supporter)
+        try:
+            db.commit()
+        except IntegrityError:
+            # Backstop in caso di richieste quasi simultanee (race condition)
+            db.rollback()
+            return error(409, "Something went wrong, please try again.")
+
+        db.refresh(supporter)
+        return jsonify({"user_id": supporter.user_id, "nickname": nickname}), 200
+    finally:
         db.close()
-        return JSONResponse(
-            status_code=409,
-            content={"detail": "Something went wrong, please try again."},
-        )
 
-    db.refresh(supporter)
-    user_id = supporter.user_id
-    db.close()
 
-    return JSONResponse(
-        status_code=200,
-        content={"user_id": user_id, "nickname": nickname},
-    )
+if __name__ == "__main__":
+    # Solo per test locale: python main.py  (su PythonAnywhere lo avvia il WSGI)
+    app.run(debug=True)

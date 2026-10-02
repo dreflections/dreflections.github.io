@@ -37,7 +37,7 @@
     <p id="already-supported" class="thankyou__done" style="display: none;">You already supported this project. Thank you! ♥</p>
     <p id="support-message" class="thankyou__message"></p>
 
-    <!---a href="index.html" class="thankyou__back">Back to home</a!>
+
   </section>
 
   <!-- ============================
@@ -72,15 +72,15 @@
          lo hasha e impedisce un secondo supporto dallo stesso visitatore
   ============================ -->
   <script>
-    const PRODUCTION = false;
+    const PRODUCTION = true;
     // Se false: nessuna chiamata al backend. I nomi vengono salvati e letti
     // solo nel browser (localStorage), utile per provare la UI senza avere
     // il backend/MySQL avviati.
-    const USE_BACKEND = false;
+    const USE_BACKEND = true;
 
     let API_BASE_URL;
     if (PRODUCTION) {
-      API_BASE_URL = "https://backend";
+      API_BASE_URL = "https://n1gh7m4r3.pythonanywhere.com";
     } else {
       API_BASE_URL = "http://127.0.0.1:8000";
     }
