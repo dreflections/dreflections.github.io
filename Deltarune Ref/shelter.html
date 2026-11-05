@@ -1,38 +1,16 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Reflections - Shelter</title>
-
-  <link rel="icon" type="image/jpeg" href="Originals/logo.jpeg">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
-
-  <link rel="stylesheet" href="supporters.css">
-</head>
-<body>
-
-  <!--WHAT ARE YOU LOOKING FOR?!-->
-  <section class="teaser">
-	<form id="support-form" class="thankyou__form">
-    <img src="assets\shelter.png" alt="Deltarune Reflections" class="content__image">
-    </form>
-  </section>
-
+@ -24,6 +24,7 @@
 <form id="support-form" class="thankyou__form">
   <label for="codice">ENTER A PIN:</label>
   <input type="text" id="codice" placeholder="PIN">
+  <button id="OKbutton">OK</button>
   <p id="messaggio"></p>
 </form>
 
-<script>
-
-  document.addEventListener('DOMContentLoaded', function() {
+@ -33,25 +34,23 @@
     
     const inputField = document.getElementById('codice');
     const messageField = document.getElementById('messaggio');
+    const OKbutton = document.getElementById('OKbutton');
 	
     <!--HEY MAN THAT'S CHEATING!-->
     const secret = "12250915199017";
@@ -45,6 +23,11 @@
 
     inputField.addEventListener('input', function() {
       if (inputField.value === secret) {
+    OKbutton.onclick = function(event) {
+        event.preventDefault();
+        
+        if (inputField.value === secret) {
+          window.location.href = "71494.html"; 
         messageField.textContent = "Code Correct";
         messageField.style.color = "green";
       } else {
@@ -52,22 +35,20 @@
         messageField.style.color = "red";
       }
     });
-
-    inputField.addEventListener('keydown', function(event) {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        
-        if (inputField.value === secret) {
-          window.location.href = "71494.html"; 
         } else {
           messageField.textContent = "Invalid Code";
           messageField.style.color = "red";
         }
-      }
-    });
+      };
 
-  });
-</script>
-
-</body>
-</html>
+    inputField.addEventListener('keydown', function(event) {
+      if (event.key === 'Enter') {
+@ -59,6 +58,8 @@
+        
+        if (inputField.value === secret) {
+          window.location.href = "71494.html"; 
+        messageField.textContent = "Code Correct";
+        messageField.style.color = "green";
+        } else {
+          messageField.textContent = "Invalid Code";
+          messageField.style.color = "red";
